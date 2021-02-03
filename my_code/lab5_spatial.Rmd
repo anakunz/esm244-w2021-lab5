@@ -1,0 +1,146 @@
+---
+title: "Spatial Data"
+author: "Anastasia Kunz"
+date: "2/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+library(sf)
+library(tmap)
+
+
+```
+
+## Spatial Data Wrangling and Visualization
+
+#### 1. California Counties 
+
+```{r}
+ca_counties <- (read_sf(here("data", "ca_counties", "CA_Counties_TIGER2016.shp")))
+```
+
+make a subset with only county_name and land_area
+
+```{r}
+ca_subset <- ca_counties %>% 
+  select(NAME, ALAND) %>% 
+  rename(county_name = NAME, land_area = ALAND)
+```
+
+geometry data is "sticky" even though we didnt select it, it sticks around
+
+### Set the CRS
+check existing crs for the spatial data
+
+```{r}
+ca_subset %>%  st_crs()
+```
+
+#### Look at the data
+plot using geom_sf() function, can update aesthetics like ggplot. 
+
+Update color based on land area
+
+```{r}
+ggplot(data = ca_subset) +
+  geom_sf(aes(fill = land_area), color = "white", siize = 0.1) +
+  theme_void()+
+  scale_fill_gradientn(colors = c("cyan", "blue", "purple"))
+```
+
+#### 2. Invasive red sesbania records
+invasive plant in california
+
+```{r}
+sesbania <- read_sf(here("data", "red_sesbania", "ds80.shp"))
+
+sesbania %>% st_crs()
+```
+
+because they dont match we will want to reproject it to match using st_transform()
+
+```{r}
+sesbania <- st_transform(sesbania, 3857)
+
+sesbania %>% st_crs()
+```
+
+Same projection!!!
+
+#### 3. Plot them both together!
+note i actually had to put "data = xxx" in my geom... dont usually have to do that
+
+```{r}
+ggplot()+
+  geom_sf(data = ca_subset)+
+  geom_sf(data = sesbania, size = 1, color = "red")
+```
+
+
+####  Data Wrangling
+
+**Spatial Joins**
+
+st_join will join the two datasets
+
+```{r}
+ca_sesbania <- ca_subset %>% 
+  st_join(sesbania)
+```
+
+Now we can find the counts of sesbania in each county
+
+```{r}
+sesbania_counts <- ca_sesbania %>% 
+  count(county_name)
+```
+
+now we can create a chloropleth map using the number of records for sesbania as fill color (instead of land area from previous graph)
+
+```{r}
+ggplot(data = sesbania_counts) +
+  geom_sf(aes(fill = n), color = "white", size = 0.1)+
+  scale_fill_gradientn(colors = c( "lightgray", "orange", "red")) +
+  theme_minimal()+
+  labs(fill = "Number of s. punicea records")
+```
+
+Focus on a county do some wrangling. Look at solano county with lots of sesbania
+
+```{r}
+solano_sesbania <- sesbania %>% 
+  filter(COUNTY == "Solano")
+
+solano <- ca_subset %>% 
+  filter(county_name == "Solano")
+
+ggplot()+
+  geom_sf(data = solano)+
+  geom_sf(data = solano_sesbania)
+
+```
+
+#### Make an interactive map with tmap
+
+make one for CA counties (fill aesthetic by land area with the red sesbania locations on the top)
+
+```{r}
+#set mode to interactive
+tmap_mode(mode = "view")
+
+# Make map with polygon fill color updated by the var land_area, updating the color pallette to "Bu Gn" then add another shape layer for the sesbania records as dots
+
+tm_shape(ca_subset)+
+  tm_fill("land_area", palette = "BuGn") +
+  tm_shape(sesbania)+
+  tm_dots()+
+  tm_basemap("Stamen.Watercolor")
+
+
+
+```
+
