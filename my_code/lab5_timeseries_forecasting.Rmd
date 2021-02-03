@@ -1,0 +1,186 @@
+---
+title: "Lab Part 1 Time Series + Wrangling"
+author: "Anastasia Kunz"
+date: "2/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tsibble)
+library(feasts)
+library(fable)
+library(here)
+```
+
+```{r}
+energy <- read_csv(here("data", "energy.csv"))
+```
+## Make into tsibble recognized date
+
+add new date column  that is the current month column into a time series class, yearmonth, then convert into a tsibble with teh date column as the time index
+
+```{r}
+energy_ts <- energy %>% 
+  mutate(date = tsibble::yearmonth(month)) %>% #date is the new column made
+  as_tsibble(key = NULL, index = date)
+  
+```
+
+## Explore visualizations
+#### Raw data graph
+take a quick look at the raw data time series
+
+first looka t residential energy use in trillion btu
+
+```{r}
+ggplot(energy_ts, aes(x = date, y = res_total))+
+  geom_line()+
+  labs(
+    y = "residentail energy cosumption \n (trillion BTU)" # adds the x axis date label itself
+  )
+```
+
+is there an overall trend?
+  Yes, i think so but it seems to tamp down. So initial increase but then levels off
+is there seasonality?
+  Definitley, initial peak then sencondary peak. Secondary peak has increased
+cyclical?
+  Ahhh.... I dont think so
+Other notable patterns outliers?
+  well not really, nothing jumps out at me
+  
+  
+#### Season plot
+for better understanding the seasonal componenet we noticed in the raw data plot above
+
+```{r}
+energy_ts %>% 
+  gg_season(y = res_total) +
+  theme_minimal()+
+  labs(
+    x = "month",
+    y = "residential energy consumption \n (trillion btu)"
+  )
+```
+ 
+ 
+ now we can really see the summer peak has increased from the 70s through the early 2000s... Look at the jun july august peak! much bigger later on. overall energy has increased too. 2012 and 2002 that range is pretty overlapped. (the stabilization trend?)
+ 
+#### Subseries plot 
+ 
+```{r}
+energy_ts %>% 
+  gg_subseries(res_total)
+```
+ 
+same takeway here; can see the shift in the summer months to more
+
+#### Decomposition through STL
+
+allows seasonality to vary over time; not classical decomposition
+STL = Seasonal and Trend decomposition using Loess
+
+```{r}
+#Find stl decomoosition 
+dcmp <- energy_ts %>% 
+  model(STL(res_total ~season()))
+#components(dcmp)
+#visualize the decomposed components
+components(dcmp) %>%  autoplot()+
+  theme_minimal()
+```
+
+## Autocorrelation function (ACF)
+```{r}
+energy_ts %>% 
+  ACF(res_total) %>% 
+  autoplot()
+```
+
+# Forecasting
+## Holt Winters exponential smoothing
+
+we are using ETS which uses different optimization than holt winters exponential smoothing but is otherwise the same 
+
+to create teh model, we specify the model type, exponential smoothing, ETs, then tell it what type of seasonality should assume using the season(") expression wehre N = non seasonal - can try changing this to see how unimpressive the forecast becomes -- A = additive, M = multiplicative
+
+here we says eason is multiplicative bc the change in variance over time and within the secondary summer peak
+
+```{r}
+# Create the model:
+energy_fit <- energy_ts %>%
+  model(
+    ets = ETS(res_total ~ season("M"))
+  )
+
+# Forecast using the model 10 years into the future:
+energy_forecast <- energy_fit %>% 
+  forecast(h = "10 years")
+
+# Plot just the forecasted values (with 80 & 95% CIs):
+energy_forecast %>% 
+  autoplot()
+
+#or plot it addded to the orignal data
+energy_forecast %>% 
+  autoplot(energy_ts)
+
+```
+
+### Assessing residuals
+
+can use broom::augment() to append original tsibbe with what the model predicts the energy usage would be based on the model
+-- get predicted values and residuals
+
+```{r}
+# Append the predicted values and residuals to original energy data
+energy_predicted <- broom::augment(energy_fit)
+
+ggplot(energy_predicted)+
+  geom_line(aes(x = date, y = res_total))+
+  geom_line(aes(x = date, y = .fitted), color = "red")
+
+```
+
+Explore residuals
+
+- should be uncorrelated
+- should be centered at 0
+- ideally should be normally distributed
+
+use a histogram:
+
+```{r}
+ggplot(energy_predicted, aes(x = .resid))+
+  geom_histogram()
+```
+
+pretty normal, centered at zero
+
+### Other interesting models:
+
+```{r}
+# Fit 3 different forecasting models (ETS, ARIMA, SNAIVE):
+energy_fit_multi <- energy_ts %>%
+  model(
+    ets = ETS(res_total ~ season("M")),
+    arima = ARIMA(res_total),
+    snaive = SNAIVE(res_total)
+  )
+
+# Forecast 3 years into the future (from data end date)
+multi_forecast <- energy_fit_multi %>% 
+  forecast(h = "3 years")
+
+# Plot the 3 forecasts
+multi_forecast %>% 
+  autoplot(energy_ts)
+
+# Or just view the forecasts (note the similarity across models):
+multi_forecast %>% 
+  autoplot()
+```
+
+
